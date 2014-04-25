@@ -6,21 +6,13 @@ module ActiveMerchant #:nodoc:
       API_VERSION = '3.1.1.15'
 
       self.live_url = 'https://api.maxipago.net/UniversalAPI/postXML'
-
       self.test_url = 'https://testapi.maxipago.net/UniversalAPI/postXML'
 
-      # The countries the gateway supports merchants from as 2 digit ISO country codes
       self.supported_countries = ['BR']
       self.default_currency = 'BRL'
       self.money_format = :dollars
-
-      # The card types supported by the payment gateway
       self.supported_cardtypes = [:visa, :master, :discover, :american_express, :diners_club]
-
-      # The homepage URL of the gateway
       self.homepage_url = 'http://www.maxipago.com/'
-
-      # The name of the gateway
       self.display_name = 'maxiPago!'
 
       def initialize(options = {})
@@ -28,35 +20,33 @@ module ActiveMerchant #:nodoc:
         super
       end
 
-      def authorize(money, creditcard, options = {})
-        post = {action: 'auth'}
+      def purchase(money, creditcard, options = {})
+        post = {}
         add_aux_data(post, options)
         add_amount(post, money)
         add_creditcard(post, creditcard)
         add_name(post, creditcard)
         add_address(post, options)
-        #add_customer_data(post, options)
 
-        commit('authonly', money, post)
+        commit(build_sale_request(post))
       end
 
-      def purchase(money, creditcard, options = {})
-        post = {action: 'sale'}
+      def authorize(money, creditcard, options = {})
+        post = {}
         add_aux_data(post, options)
         add_amount(post, money)
         add_creditcard(post, creditcard)
         add_name(post, creditcard)
         add_address(post, options)
-        #add_customer_data(post, options)
 
-        commit('sale', money, post)
+        commit(build_sale_request(post, "auth"))
       end
 
       def capture(money, authorization, options = {})
-        post = {orderID: authorization}
+        post = {}
         add_amount(post, money)
         add_aux_data(post, options)
-        commit('capture', money, post)
+        commit(build_capture_request(authorization, post))
       end
 
       def prepaid_voucher(money, options = {})
@@ -67,16 +57,14 @@ module ActiveMerchant #:nodoc:
         post[:nosso_numero] = options[:nosso_numero]
         add_amount(post, money)
         add_address(post, options)
-        commit('voucher', money, post)
+        commit(build_voucher_request(post))
       end
 
       private
 
-      def commit(action, money, parameters)
-        url = test? ? self.test_url : self.live_url
-        request = self.send("build_#{action}_request", parameters)
-        raw_response = ssl_post(url, request, 'Content-Type' => 'text/xml')
-        response = parse(raw_response)
+      def commit(request)
+        url = (test? ? self.test_url : self.live_url)
+        response = parse(ssl_post(url, request, 'Content-Type' => 'text/xml'))
         Response.new(
           success?(response),
           message_from(response),
@@ -87,18 +75,18 @@ module ActiveMerchant #:nodoc:
       end
 
       def success?(response)
-        response[:response_code] == '0'
+        (response[:response_code] == '0')
       end
 
       def message_from(response)
         return response[:error_message] if response[:error_message].present?
         return response[:processor_message] if response[:processor_message].present?
         return response[:response_message] if response[:response_message].present?
-        return success?(response) ? 'success' : 'error'
+        return (success?(response) ? 'success' : 'error')
       end
 
       def add_aux_data(post, options)
-        post[:processorID] = test? ? 1 : 4 # test: 1, redecard: 2, cielo: 4
+        post[:processorID] = (test? ? 1 : 4) # test: 1, redecard: 2, cielo: 4
         post[:referenceNum] = options[:order_id]
       end
 
@@ -111,6 +99,8 @@ module ActiveMerchant #:nodoc:
         post[:card_exp_month] = creditcard.month
         post[:card_exp_year] = creditcard.year
         post[:card_cvv] = creditcard.verification_value
+        post[:card_installments] = if creditcard.respond_to?(:installments) then creditcard.installments else '' end
+        post[:card_installments] = '' if post[:card_installments] == 1 # blank if it isnt a deferred payment, as the documentation suggests
       end
 
       def add_name(post, creditcard)
@@ -118,20 +108,22 @@ module ActiveMerchant #:nodoc:
       end
 
       def add_address(post, options)
-        post[:billing_address] = options[:billing_address][:address1]
-        post[:billing_address2] = options[:billing_address][:address2]
-        post[:billing_city] = options[:billing_address][:city]
-        post[:billing_state] = options[:billing_address][:state]
-        post[:billing_postalcode] = options[:billing_address][:zip]
-        post[:billing_country] = options[:billing_address][:country]
-        post[:billing_phone] = options[:billing_address][:phone]
+        if(address = (options[:address] || options[:billing_address]))
+          post[:billing_address] = address[:address1]
+          post[:billing_address2] = address[:address2]
+          post[:billing_city] = address[:city]
+          post[:billing_state] = address[:state]
+          post[:billing_postalcode] = address[:zip]
+          post[:billing_country] = address[:country]
+          post[:billing_phone] = address[:phone]
+        end
       end
 
-      def build_capture_request(params)
+      def build_capture_request(authorization, params)
         build_request(params) do |xml|
           xml.capture! {
-            xml.orderID params[:orderID]
-            xml.referenceNum params[:referenceNum] # spree_order
+            xml.orderID authorization
+            xml.referenceNum params[:referenceNum]
             xml.payment {
               xml.chargeTotal params[:amount]
             }
@@ -139,9 +131,9 @@ module ActiveMerchant #:nodoc:
         end
       end
 
-      def build_authonly_request(params)
+      def build_sale_request(params, action="sale")
         build_request(params) do |xml|
-          xml.send(params[:action]) {
+          xml.send(action) {
             xml.processorID params[:processorID]
             xml.fraudCheck 'N'
             xml.referenceNum params[:referenceNum] # spree_order
@@ -157,6 +149,12 @@ module ActiveMerchant #:nodoc:
             }
             xml.payment {
               xml.chargeTotal params[:amount]
+              unless params[:card_installments].blank?
+                xml.creditInstallment {
+                  xml.numberOfInstallments params[:card_installments]
+                  xml.chargeInterest 'N'
+                }
+              end
             }
             xml.billing {
               xml.name params[:billing_name]
@@ -171,7 +169,6 @@ module ActiveMerchant #:nodoc:
           }
         end
       end
-      alias_method :build_sale_request, :build_authonly_request
 
       def build_voucher_request(params)
         build_request(params) do |xml|
@@ -237,7 +234,6 @@ module ActiveMerchant #:nodoc:
           response[node.name.underscore.to_sym] = node.text
         end
       end
-
     end
   end
 end
