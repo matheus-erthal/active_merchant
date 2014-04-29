@@ -1,8 +1,6 @@
 require 'test_helper'
 
 class RemoteMaxipagoTest < Test::Unit::TestCase
-
-
   def setup
     @gateway = MaxipagoGateway.new(fixtures(:maxipago))
 
@@ -15,6 +13,7 @@ class RemoteMaxipagoTest < Test::Unit::TestCase
       order_id: '12345',
       billing_address: address,
       description: 'Store Purchase',
+      installments: 3
     }
   end
 
