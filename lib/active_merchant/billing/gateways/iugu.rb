@@ -70,6 +70,8 @@ module ActiveMerchant #:nodoc:
         if payment.is_a?(CreditCard)
           post = create_post_for_token(payment)
           response = commit(:post, "payment_token", post, options)
+          return response unless response.success?
+
           payment = response.params['id']
         end
 
