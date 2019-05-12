@@ -32,7 +32,7 @@ module ActiveMerchant #:nodoc:
       end
 
       def authorize(money, payment, options = {})
-        token = generate_token(payment, options)
+        token = options[:token] || generate_token(payment, options)
         post = create_post_for_auth(money, token, options)
         commit(:post, 'charge', post, options)
       end
