@@ -162,6 +162,7 @@ module ActiveMerchant #:nodoc:
         address = options[:billing_address] || options[:address] || {}
         post['payer[address][street]'] = address[:street]
         post['payer[address][number]'] = address[:number]
+        post['payer[address][district]'] = address[:district]
         post['payer[address][city]'] = address[:city]
         post['payer[address][state]'] = address[:state]
         post['payer[address][country]'] = address[:country]
